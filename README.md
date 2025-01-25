@@ -23,7 +23,7 @@ This training process will be executed on a single GPU. By default, Llama3.1-8B 
 
 To train the lightweight network using LLM loss under the Accelerate and DeepSpeed frameworks, execute:
 ```
-CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch --config_file= ./4gpu.yaml llmloss_entry.py
+CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch --config_file 4gpu.yaml llmloss_entry.py
 ```
 This training process will be executed on 4 GPUs. Compared to mse loss, this will require more GPU memory.
 
