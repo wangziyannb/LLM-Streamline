@@ -1,4 +1,4 @@
-# Streamlining Redundant Layers to Compress Large Language Models
+# ICLR 2025: Streamlining Redundant Layers to Compress Large Language Models
 
 #### Supported LLMs:
 -  [Llama-3 Hugging Face]
