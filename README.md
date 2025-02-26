@@ -7,8 +7,8 @@ Below are the evaluation results on lm-eval:
 |----------------|-------|-------|-------|-----------|------------|------|------------|------|
 | Llama-3.1-8B   | 50.4  | 80.3  | 81.2  | 60.2      | 34.8       | 67.9 | 73.0       | 64.0 |
 | Llama-3.1-5.4B | 43.3  | 74.8  | 80.7  | 55.8      | 32.2       | 69.3 | 73.0       | 61.3 |
-| Llama-2-7b   | 43.3  | 76.4  | 77.7  | 57.2      | 31.4       | 62.8 | 69.1       | 59.7 |
-| Llama-2-4.7b | 34.0  | 64.6  | 74.7  | 49.8      | 27.4       | 61.7 | 66.4       | 54.1 |
+| Llama-2-7B   | 43.3  | 76.4  | 77.7  | 57.2      | 31.4       | 62.8 | 69.1       | 59.7 |
+| Llama-2-4.7B | 34.0  | 64.6  | 74.7  | 49.8      | 27.4       | 61.7 | 66.4       | 54.1 |
 
 Llama-2-4.7B employs a single Transformer Layer as a lightweight model, while Llama-3.1-5.4B utilizes two layers. Llama-2-4.7B was trained on a total of 0.06B tokens, and Llama-3.1-5.4B was trained on 1.3B tokens. Both models were trained using llm_loss.
 
