@@ -1,5 +1,16 @@
 # ICLR 2025: Streamlining Redundant Layers to Compress Large Language Models
 
+#### Open Source Models:
+We have released two open source models, [Llama-2-4.7B](https://huggingface.co/XiaodongChen/Llama-2-4.7B) and [Llama-3.1-5.4B](https://huggingface.co/XiaodongChen/Llama-3.1-5.4B) on Hugging Face.
+Below are the evaluation results on lm-eval:
+|                | arc_c | arc_e | boolq | hellaswag | openbookqa | rte  | winogrande | Avg  |
+|----------------|-------|-------|-------|-----------|------------|------|------------|------|
+| Llama-3.1-8B   | 50.4  | 80.3  | 81.2  | 60.2      | 34.8       | 67.9 | 73.0       | 64.0 |
+| Llama-3.1-5.4B | 43.3  | 74.8  | 80.7  | 55.8      | 32.2       | 69.3 | 73.0       | 61.3 |
+|----------------|-------|-------|-------|-----------|------------|------|------------|------|
+| Llama-2-7b   | 43.3  | 76.4  | 77.7  | 57.2      | 31.4       | 62.8 | 69.1       | 59.7 |
+| Llama-2-4.7b | 34.0  | 64.6  | 74.7  | 49.8      | 27.4       | 61.7 | 66.4       | 54.1 |
+
 #### Supported LLMs:
 -  [Llama-3 Hugging Face]
 -  [Llama-2 Hugging Face]
