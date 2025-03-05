@@ -14,9 +14,9 @@ We have released two compressed models on Hugging Face:
 | ​**Llama-2-4.7B**​  | 34.0  | 64.6  | 74.7  | 49.8      | 27.4       | 61.7 | 66.4       | 54.1 |
 
 **Model Specifications**:
-- `Llama-2-4.7B`: Using single Transformer Layer as lightweight network, trained on 0.06B tokens
-- `Llama-3.1-5.4B`: Using two Transformer Layers as lightweight network, trained on 1.3B tokens  
-- Both models trained using `llm_loss`
+- `Llama-2-4.7B`: Using single Transformer Layer as lightweight network, trained on 0.06B tokens.
+- `Llama-3.1-5.4B`: Using two Transformer Layers as lightweight network, trained on 1.3B tokens.  
+- Both models trained using `llm_loss`.
 
 ## 🤖 Supported LLM Architectures
 - [Llama-3](https://huggingface.co/models?search=llama3) 
