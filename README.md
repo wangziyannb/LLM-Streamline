@@ -24,12 +24,15 @@ We have released two compressed models on Hugging Face:
 - [OPT](https://huggingface.co/models?search=opt)
 
 ## ⚙️ Installation
+```
 pip install -r requirements.txt
+```
 
 ## ✂️ Layer Pruning
 Our code focuses on using Transformer layers as the lightweight network. The parameter weights of the first pruned layer are inherited for training, as this approach produces better results compared to using FFN or SwiGLU.
 
 ▶️ MSE Loss Training (Single GPU)
+
 To train the lightweight network using MSE loss, execute:
 ```
 python mseloss_entry.py
@@ -37,6 +40,7 @@ python mseloss_entry.py
 This training process will be executed on a single GPU. By default, Llama3.1-8B will be pruned and 8 layers will be removed from the model. All the pre-trained models and the dataset will be automatically downloaded, so you do not need to manually download the resource. When running it for the first time, it will require some time to download the model and the dataset. Please ensure that there is sufficient memory available, as all hidden states will be stored in memory. If memory is insufficient, you may modify the code to store the hidden states on the disk or utilize LLM loss for training.
 
 ▶️ LLM Loss Training (Multi-GPU)
+
 To train the lightweight network using LLM loss under the Accelerate and DeepSpeed frameworks, execute:
 ```
 CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch --config_file 4gpu.yaml llmloss_entry.py
