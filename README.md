@@ -2,8 +2,8 @@
 
 #### 📦 Open Source Models
 We have released two compressed models on Hugging Face:
-**[Llama-2-4.7B](https://huggingface.co/XiaodongChen/Llama-2-4.7B)**
-**[Llama-3.1-5.4B](https://huggingface.co/XiaodongChen/Llama-3.1-5.4B)**
+**[Llama-2-4.7B](https://huggingface.co/XiaodongChen/Llama-2-4.7B)** and
+**[Llama-3.1-5.4B](https://huggingface.co/XiaodongChen/Llama-3.1-5.4B)**.
 
 ### 📊 Evaluation Results (lm-eval)
 | Model             | arc_c | arc_e | boolq | hellaswag | openbookqa | rte  | winogrande | Avg  |
