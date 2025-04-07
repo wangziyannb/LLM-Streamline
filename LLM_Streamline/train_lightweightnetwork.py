@@ -25,14 +25,19 @@ class CustomDataset(Dataset):
         return len(self.input_data)
 
 def process_datasets(dataset, train_num_data, tokenizer):
+    '''
+    We divided the proportions of RedPajamaCommonCrawl, RedPajamaArXiv, 
+    and RedPajamaBook by a normalization value because the data length 
+    in these domains is higher than in other domains.
+    '''
     proportions = {
         "RedPajamaC4": 0.492,
         "RedPajamaStackExchange": 0.01,
-        "RedPajamaCommonCrawl": 0.361,
+        "RedPajamaCommonCrawl": 0.361 / 3,
         "RedPajamaGithub": 0.008,
         "RedPajamaWikipedia": 0.031,
-        "RedPajamaArXiv": 0.007,
-        "RedPajamaBook": 0.091
+        "RedPajamaArXiv": 0.007 / 20,
+        "RedPajamaBook": 0.091 / 200
     }
     
     filtered_datasets = {
