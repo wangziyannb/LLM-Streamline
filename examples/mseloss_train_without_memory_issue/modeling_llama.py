@@ -503,7 +503,7 @@ class LlamaModel(LlamaPreTrainedModel):
             [LlamaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
         
-        self.replace_layer = LlamaDecoderLayer(config, 0)   #用于替换的层
+        self.replace_layer = LlamaDecoderLayer(config, 0)   #The Lightweight Layer
         
         #self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = LlamaRotaryEmbedding(config=config)
@@ -613,7 +613,7 @@ class LlamaModel(LlamaPreTrainedModel):
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
 
-            if idx == 18:  #前面有19层 
+            if idx == 18:  #The hidden states after the 19th layer are fed into the lightweight layer.
                 replace_hidden_states = self.replace_layer(
                     hidden_states,
                     attention_mask=causal_mask,
@@ -627,14 +627,14 @@ class LlamaModel(LlamaPreTrainedModel):
                 )[0]
             idx += 1
 
-        #hidden_states = self.norm(hidden_states)  去掉norm
+        #hidden_states = self.norm(hidden_states)  Remove RMSNorm
 
         # add hidden states from the last decoder layer
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
         output = BaseModelOutputWithPast(
-            last_hidden_state=[hidden_states, replace_hidden_states],  #通过last_hidden_state传回去
+            last_hidden_state=[hidden_states, replace_hidden_states],  #Return the outputs and the targets.
             past_key_values=past_key_values if use_cache else None,
             hidden_states=all_hidden_states,
             attentions=all_self_attns,
