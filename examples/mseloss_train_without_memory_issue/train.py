@@ -19,8 +19,13 @@ import deepspeed
 accelerator = Accelerator(mixed_precision='bf16', gradient_accumulation_steps=2)
 
 config = AutoConfig.from_pretrained('/fs/fast/u2021000902/cxd/model/Llama-3.1-8B')
-
-config.num_hidden_layers = 30   #最后两层在被剪枝层后面
+'''
+Since Llama-3.1-8B has 32 layers, we will prune layers 21 to 30 while keeping layers 31 and 32. 
+The training data should be prepared such that the input to the 20th layer serves as the input to the lightweight layer, 
+and the output of the 30th layer serves as the output of the lightweight layer. 
+Therefore, during the training of the lightweight layer, layers 31 and 32 are not involved.
+'''
+config.num_hidden_layers = 30  
 tokenizer = AutoTokenizer.from_pretrained('/fs/fast/u2021000902/cxd/model/Llama-3.1-8B')
 tokenizer.pad_token = tokenizer.eos_token
 
@@ -45,7 +50,7 @@ for i in range(30):
     model_dict['layers.{}.post_attention_layernorm.weight'.format(i)] = llama_dict['model.layers.{}.post_attention_layernorm.weight'.format(i)]
         
 
-model_dict['replace_layer.self_attn.q_proj.weight'] = llama_dict['model.layers.{}.self_attn.q_proj.weight'.format(19)]  #用原来的第20层初始化
+model_dict['replace_layer.self_attn.q_proj.weight'] = llama_dict['model.layers.{}.self_attn.q_proj.weight'.format(19)]  #We use the weights from the 20th layer to initialize the lightweight layer.
 model_dict['replace_layer.self_attn.k_proj.weight'] = llama_dict['model.layers.{}.self_attn.k_proj.weight'.format(19)]
 model_dict['replace_layer.self_attn.v_proj.weight'] = llama_dict['model.layers.{}.self_attn.v_proj.weight'.format(19)]
 model_dict['replace_layer.self_attn.o_proj.weight'] = llama_dict['model.layers.{}.self_attn.o_proj.weight'.format(19)]
