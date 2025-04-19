@@ -1,0 +1,1 @@
+This example addresses the memory issue by placing lightweight layers inside the original model. In train.py, we have included detailed comments to help understand the example. In modeling.py, we only modified the LlamaModel class and also provided comprehensive annotations.
