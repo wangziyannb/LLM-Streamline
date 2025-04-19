@@ -49,8 +49,8 @@ for i in range(30):
     model_dict['layers.{}.input_layernorm.weight'.format(i)] = llama_dict['model.layers.{}.input_layernorm.weight'.format(i)]
     model_dict['layers.{}.post_attention_layernorm.weight'.format(i)] = llama_dict['model.layers.{}.post_attention_layernorm.weight'.format(i)]
         
-
-model_dict['replace_layer.self_attn.q_proj.weight'] = llama_dict['model.layers.{}.self_attn.q_proj.weight'.format(19)]  #We use the weights from the 20th layer to initialize the lightweight layer.
+#We use the weights from the 20th layer to initialize the lightweight layer.
+model_dict['replace_layer.self_attn.q_proj.weight'] = llama_dict['model.layers.{}.self_attn.q_proj.weight'.format(19)]  
 model_dict['replace_layer.self_attn.k_proj.weight'] = llama_dict['model.layers.{}.self_attn.k_proj.weight'.format(19)]
 model_dict['replace_layer.self_attn.v_proj.weight'] = llama_dict['model.layers.{}.self_attn.v_proj.weight'.format(19)]
 model_dict['replace_layer.self_attn.o_proj.weight'] = llama_dict['model.layers.{}.self_attn.o_proj.weight'.format(19)]
