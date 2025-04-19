@@ -1,1 +1,13 @@
-This example addresses the memory issue by placing lightweight layers inside the original model. In train.py, we have included detailed comments to help understand the example. In modeling.py, we only modified the LlamaModel class and also provided comprehensive annotations.
+## Implementation Details
+
+This example addresses the memory issue by implementing lightweight layers within the original model structure.
+
+### File Modifications:
+
+1. **train.py**
+   - Added detailed comments throughout the file
+   - Includes explanations for key implementation aspects
+
+2. **modeling.py**
+   - Modified only the `LlamaModel` class
+   - Added comprehensive code annotations
