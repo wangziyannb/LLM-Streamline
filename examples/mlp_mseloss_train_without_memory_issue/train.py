@@ -1,128 +1,217 @@
-from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer
-from transformers import DataCollatorForLanguageModeling
-from torch.utils.data import DataLoader
-from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer
-from transformers import DataCollatorForLanguageModeling
-from torch.utils.data import DataLoader
-from datasets import load_from_disk, load_dataset
-import logging
-import math
+from itertools import chain
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from itertools import chain
 from accelerate import Accelerator
-from accelerate.utils import set_seed
-from scheduler import get_cosine_schedule_with_warmup
+from datasets import load_from_disk, load_dataset, concatenate_datasets
+from torch.utils.data import DataLoader
 from tqdm import tqdm
+from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer
+from transformers import DataCollatorForLanguageModeling
 
 from modeling_llama import LlamaModel
-import deepspeed
+from scheduler import get_cosine_schedule_with_warmup
 
-accelerator = Accelerator(mixed_precision='bf16', gradient_accumulation_steps=2)
 
-config = AutoConfig.from_pretrained('/data/models/Llama-3-8b-hf')
-'''
-Since Llama-3.1-8B has 32 layers, we will prune layers 21 to 30 while keeping layers 31 and 32. 
-The training data should be prepared such that the input to the 20th layer serves as the input to the lightweight layer, 
-and the output of the 30th layer serves as the output of the lightweight layer. 
-Therefore, during the training of the lightweight layer, layers 31 and 32 are not involved.
-'''
-config.num_hidden_layers = 30
-tokenizer = AutoTokenizer.from_pretrained('/data/models/Llama-3-8b-hf')
-tokenizer.pad_token = tokenizer.eos_token
+def process_datasets(dataset, train_num_data, tokenizer):
+    '''
+    We divided the proportions of RedPajamaCommonCrawl, RedPajamaArXiv,
+    and RedPajamaBook by a normalization value because the data length
+    in these domains is higher than in other domains.
+    '''
+    proportions = {
+        "RedPajamaC4": 0.492,
+        "RedPajamaStackExchange": 0.01,
+        "RedPajamaCommonCrawl": 0.361 / 3,
+        "RedPajamaGithub": 0.008,
+        "RedPajamaWikipedia": 0.031,
+        "RedPajamaArXiv": 0.007 / 20,
+        "RedPajamaBook": 0.091 / 200
+    }
 
-model = LlamaModel(config)
-llama_model = AutoModelForCausalLM.from_pretrained('/data/models/Llama-3-8b-hf')
+    filtered_datasets = {
+        name: dataset.filter(lambda x: x['meta'] == {"redpajama_set_name": f"{name}"})
+        for name in proportions.keys()
+    }
 
-model_dict = model.state_dict()
-llama_dict = llama_model.state_dict()
+    test_datasets = []
+    train_datasets = []
 
-model_dict['embed_tokens.weight'] = llama_dict['model.embed_tokens.weight']
-for i in range(30):
-    model_dict['layers.{}.self_attn.q_proj.weight'.format(i)] = llama_dict['model.layers.{}.self_attn.q_proj.weight'.format(i)]
-    model_dict['layers.{}.self_attn.k_proj.weight'.format(i)] = llama_dict['model.layers.{}.self_attn.k_proj.weight'.format(i)]
-    model_dict['layers.{}.self_attn.v_proj.weight'.format(i)] = llama_dict['model.layers.{}.self_attn.v_proj.weight'.format(i)]
-    model_dict['layers.{}.self_attn.o_proj.weight'.format(i)] = llama_dict['model.layers.{}.self_attn.o_proj.weight'.format(i)]
+    for name, proportion in proportions.items():
+        split = filtered_datasets[name].train_test_split(test_size=(3000 * proportion) / len(filtered_datasets[name]))
+        test_datasets.append(split['test'])
+        train_split = \
+            split['train'].train_test_split(test_size=1 - (train_num_data * proportion) / len(split['train']))['train']
+        train_datasets.append(train_split)
 
-    model_dict['layers.{}.mlp.gate_proj.weight'.format(i)] = llama_dict['model.layers.{}.mlp.gate_proj.weight'.format(i)]
-    model_dict['layers.{}.mlp.up_proj.weight'.format(i)] = llama_dict['model.layers.{}.mlp.up_proj.weight'.format(i)]
-    model_dict['layers.{}.mlp.down_proj.weight'.format(i)] = llama_dict['model.layers.{}.mlp.down_proj.weight'.format(i)]
-    
-    model_dict['layers.{}.input_layernorm.weight'.format(i)] = llama_dict['model.layers.{}.input_layernorm.weight'.format(i)]
-    model_dict['layers.{}.post_attention_layernorm.weight'.format(i)] = llama_dict['model.layers.{}.post_attention_layernorm.weight'.format(i)]
+    dataset, test_dataset = concatenate_datasets(train_datasets), concatenate_datasets(test_datasets)
 
-model.load_state_dict(model_dict)
-del llama_model
+    tokenizer.pad_token = tokenizer.eos_token
 
-for name,p in model.named_parameters():
-    if "replace_layer" in name:
-        continue
-    else:
-        if p.requires_grad == True:
-            p.requires_grad = False
+    column_names = dataset.column_names
+    text_column_name = "text" if "text" in column_names else column_names[0]
 
-dataset = load_from_disk('/data/slimpajama-0.5B-Llama-3-tokenized')
-eval_dataset = dataset['validation']
+    def tokenize_function(examples):
+        return tokenizer(examples[text_column_name])
 
-dataset = dataset['train'].train_test_split(test_size =  300000 / len(dataset['train']))['test']
+    dataset = dataset.map(
+        tokenize_function,
+        batched=True,
+        remove_columns=column_names,
+        desc="Running tokenizer on dataset",
+    )
 
-data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
-train_dataloader = DataLoader(dataset, shuffle=True, collate_fn=data_collator, batch_size=32)
-eval_dataloader = DataLoader(eval_dataset, shuffle=False, collate_fn=data_collator, batch_size=64)
+    test_dataset = test_dataset.map(
+        tokenize_function,
+        batched=True,
+        remove_columns=column_names,
+        desc="Running tokenizer on dataset",
+    )
 
-optimizer = torch.optim.AdamW(model.parameters(), lr = 2e-4, weight_decay = 1e-3, betas=(0.9, 0.95))
-lr_scheduler = get_cosine_schedule_with_warmup(
+    block_size = 2048
+
+    def group_texts(examples):
+        concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
+        total_length = len(concatenated_examples[list(examples.keys())[0]])
+        total_length = (total_length // block_size) * block_size
+        result = {
+            k: [t[i: i + block_size] for i in range(0, total_length, block_size)]
+            for k, t in concatenated_examples.items()
+        }
+        result["labels"] = result["input_ids"].copy()
+        return result
+
+    dataset = dataset.map(
+        group_texts,
+        batched=True,
+        desc=f"Grouping texts in chunks of {block_size}",
+    )
+    test_dataset = test_dataset.map(
+        group_texts,
+        batched=True,
+        desc=f"Grouping texts in chunks of {block_size}",
+    )
+    return dataset, test_dataset
+
+
+if __name__ == '__main__':
+
+    accelerator = Accelerator(mixed_precision='bf16', gradient_accumulation_steps=2)
+
+    config = AutoConfig.from_pretrained('meta-llama/Llama-2-7b-hf')
+    '''
+    Since Llama-3.1-8B has 32 layers, we will prune layers 21 to 30 while keeping layers 31 and 32. 
+    The training data should be prepared such that the input to the 20th layer serves as the input to the lightweight layer, 
+    and the output of the 30th layer serves as the output of the lightweight layer. 
+    Therefore, during the training of the lightweight layer, layers 31 and 32 are not involved.
+    '''
+    config.num_hidden_layers = 2
+    tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-2-7b-hf')
+    tokenizer.pad_token = tokenizer.eos_token
+
+    model = LlamaModel(config)
+    llama_model = AutoModelForCausalLM.from_pretrained('meta-llama/Llama-2-7b-hf')
+
+    model_dict = model.state_dict()
+    llama_dict = llama_model.state_dict()
+
+    model_dict['embed_tokens.weight'] = llama_dict['model.embed_tokens.weight']
+    for i in range(2):
+        model_dict['layers.{}.self_attn.q_proj.weight'.format(i)] = llama_dict[
+            'model.layers.{}.self_attn.q_proj.weight'.format(i)]
+        model_dict['layers.{}.self_attn.k_proj.weight'.format(i)] = llama_dict[
+            'model.layers.{}.self_attn.k_proj.weight'.format(i)]
+        model_dict['layers.{}.self_attn.v_proj.weight'.format(i)] = llama_dict[
+            'model.layers.{}.self_attn.v_proj.weight'.format(i)]
+        model_dict['layers.{}.self_attn.o_proj.weight'.format(i)] = llama_dict[
+            'model.layers.{}.self_attn.o_proj.weight'.format(i)]
+
+        model_dict['layers.{}.mlp.gate_proj.weight'.format(i)] = llama_dict[
+            'model.layers.{}.mlp.gate_proj.weight'.format(i)]
+        model_dict['layers.{}.mlp.up_proj.weight'.format(i)] = llama_dict[
+            'model.layers.{}.mlp.up_proj.weight'.format(i)]
+        model_dict['layers.{}.mlp.down_proj.weight'.format(i)] = llama_dict[
+            'model.layers.{}.mlp.down_proj.weight'.format(i)]
+
+        model_dict['layers.{}.input_layernorm.weight'.format(i)] = llama_dict[
+            'model.layers.{}.input_layernorm.weight'.format(i)]
+        model_dict['layers.{}.post_attention_layernorm.weight'.format(i)] = llama_dict[
+            'model.layers.{}.post_attention_layernorm.weight'.format(i)]
+
+    model.load_state_dict(model_dict)
+    del llama_model
+
+    for name, p in model.named_parameters():
+        if "replace_layer" in name:
+            continue
+        else:
+            if p.requires_grad == True:
+                p.requires_grad = False
+
+    dataset = load_dataset('DKYoon/SlimPajama-6B')['train']
+    dataset, test_dataset = process_datasets(dataset, 3000, tokenizer)
+
+    dataset = load_from_disk('/data/slimpajama-0.5B-Llama-3-tokenized')
+    eval_dataset = dataset['validation']
+
+    dataset = dataset['train'].train_test_split(test_size=300000 / len(dataset['train']))['test']
+
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    train_dataloader = DataLoader(dataset, shuffle=True, collate_fn=data_collator, batch_size=32)
+    eval_dataloader = DataLoader(eval_dataset, shuffle=False, collate_fn=data_collator, batch_size=64)
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=2e-4, weight_decay=1e-3, betas=(0.9, 0.95))
+    lr_scheduler = get_cosine_schedule_with_warmup(
         optimizer=optimizer,
-        num_warmup_steps=len(train_dataloader)*0.03,
+        num_warmup_steps=len(train_dataloader) * 0.03,
         num_training_steps=len(train_dataloader),
         max_learning_rate=2e-4,
         min_learning_rate=5e-6,
     )
 
-train_dataloader, eval_dataloader, model, optimizer = accelerator.prepare(
+    train_dataloader, eval_dataloader, model, optimizer = accelerator.prepare(
         train_dataloader, eval_dataloader, model, optimizer
     )
 
-mse_loss = nn.MSELoss()
+    mse_loss = nn.MSELoss()
 
-best_loss = 10000
-for epoch in range(1):
-    model.train()
-    for step, batch in tqdm(enumerate(train_dataloader)):
-        with accelerator.accumulate(model):
-            input_ids = batch['input_ids']
-            attention_mask = batch['attention_mask']
-            outputs = model(input_ids = input_ids, attention_mask=attention_mask)
-            labels = outputs.last_hidden_state[0]
-            outputs = outputs.last_hidden_state[1]
-            loss = mse_loss(labels, outputs)
-
-            accelerator.backward(loss)
-            optimizer.step()
-            lr_scheduler.step()
-            optimizer.zero_grad()
-
-        if (step+1) % 500 == 0:            
-            model.eval()
-            losses = []
-            for step, batch in tqdm(enumerate(eval_dataloader)):
-                with torch.no_grad():
-                    input_ids = batch['input_ids']
-                    attention_mask = batch['attention_mask']
-                    outputs = model(input_ids = input_ids, attention_mask=attention_mask)
-                    labels = outputs.last_hidden_state[0]
-                    outputs = outputs.last_hidden_state[1]
-
+    best_loss = 10000
+    for epoch in range(1):
+        model.train()
+        for step, batch in tqdm(enumerate(train_dataloader)):
+            with accelerator.accumulate(model):
+                input_ids = batch['input_ids']
+                attention_mask = batch['attention_mask']
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+                labels = outputs.last_hidden_state[-1]
+                outputs = outputs.last_hidden_state[-2]
                 loss = mse_loss(labels, outputs)
-                losses.append(accelerator.gather_for_metrics(loss.repeat(64)))
 
-            losses = torch.cat(losses)
-            eval_loss = torch.mean(losses)
-            print(eval_loss)
-            if eval_loss < best_loss:
-                best_loss = eval_loss
-                #model.save_pretrained('')
-            model.train()
+                accelerator.backward(loss)
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad()
 
-#model.save_pretrained('')
+            if (step + 1) % 500 == 0:
+                model.eval()
+                losses = []
+                for step, batch in tqdm(enumerate(eval_dataloader)):
+                    with torch.no_grad():
+                        input_ids = batch['input_ids']
+                        attention_mask = batch['attention_mask']
+                        outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+                        labels = outputs.last_hidden_state[-1]
+                        outputs = outputs.last_hidden_state[-2]
+
+                    loss = mse_loss(labels, outputs)
+                    losses.append(accelerator.gather_for_metrics(loss.repeat(64)))
+
+                losses = torch.cat(losses)
+                eval_loss = torch.mean(losses)
+                print(eval_loss)
+                if eval_loss < best_loss:
+                    best_loss = eval_loss
+                    # model.save_pretrained('')
+                model.train()
+    torch.save(model, 'model.bin')
+    # model.save_pretrained('')
