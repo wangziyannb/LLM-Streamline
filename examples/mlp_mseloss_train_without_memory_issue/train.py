@@ -1,9 +1,11 @@
+import os
+import pickle
 from itertools import chain
 
 import torch
 import torch.nn as nn
 from accelerate import Accelerator
-from datasets import load_from_disk, load_dataset, concatenate_datasets
+from datasets import load_from_disk, load_dataset, concatenate_datasets, DatasetDict
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer
@@ -95,8 +97,8 @@ def process_datasets(dataset, train_num_data, tokenizer):
 
 
 if __name__ == '__main__':
-
-    accelerator = Accelerator(mixed_precision='bf16', gradient_accumulation_steps=2)
+    device = 'cuda'
+    accelerator = Accelerator(mixed_precision='bf16', gradient_accumulation_steps=1)
 
     config = AutoConfig.from_pretrained('meta-llama/Llama-2-7b-hf')
     '''
@@ -140,7 +142,7 @@ if __name__ == '__main__':
 
     model.load_state_dict(model_dict)
     del llama_model
-
+    model = model.to(device)
     for name, p in model.named_parameters():
         if "replace_layer" in name:
             continue
@@ -148,29 +150,36 @@ if __name__ == '__main__':
             if p.requires_grad == True:
                 p.requires_grad = False
 
-    dataset = load_dataset('DKYoon/SlimPajama-6B')['train']
-    dataset, test_dataset = process_datasets(dataset, 3000, tokenizer)
+    if os.path.exists("slimpajama-Llama-2-tokenized-0.06b"):
+        datasets = load_from_disk("slimpajama-Llama-2-tokenized-0.06b")
+        dataset = datasets['train']
+        test_dataset = datasets['validation']
+    else:
+        dataset = load_dataset('DKYoon/SlimPajama-6B')['train']
+        dataset, test_dataset = process_datasets(dataset, 100000, tokenizer)
 
-    dataset = load_from_disk('/data/slimpajama-0.5B-Llama-3-tokenized')
-    eval_dataset = dataset['validation']
-
-    dataset = dataset['train'].train_test_split(test_size=300000 / len(dataset['train']))['test']
+        # dataset = load_from_disk('/data/slimpajama-0.5B-Llama-3-tokenized')
+        # eval_dataset = dataset['validation']
+        datasets = DatasetDict({'validation': test_dataset, 'train': dataset})
+        datasets.save_to_disk("slimpajama-Llama-2-tokenized-0.06b")
 
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
-    train_dataloader = DataLoader(dataset, shuffle=True, collate_fn=data_collator, batch_size=32)
-    eval_dataloader = DataLoader(eval_dataset, shuffle=False, collate_fn=data_collator, batch_size=64)
+    test_dataloader = DataLoader(test_dataset, batch_size=32, collate_fn=data_collator,
+                                 shuffle=True)
+    train_dataloader = DataLoader(dataset, batch_size=32, collate_fn=data_collator,
+                                  shuffle=True)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=2e-4, weight_decay=1e-3, betas=(0.9, 0.95))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4, betas=(0.9, 0.95))
     lr_scheduler = get_cosine_schedule_with_warmup(
         optimizer=optimizer,
         num_warmup_steps=len(train_dataloader) * 0.03,
         num_training_steps=len(train_dataloader),
-        max_learning_rate=2e-4,
-        min_learning_rate=5e-6,
+        max_learning_rate=1e-3,
+        min_learning_rate=2.5e-5,
     )
 
-    train_dataloader, eval_dataloader, model, optimizer = accelerator.prepare(
-        train_dataloader, eval_dataloader, model, optimizer
+    train_dataloader, test_dataloader, model, optimizer = accelerator.prepare(
+        train_dataloader, test_dataloader, model, optimizer
     )
 
     mse_loss = nn.MSELoss()
@@ -195,7 +204,7 @@ if __name__ == '__main__':
             if (step + 1) % 500 == 0:
                 model.eval()
                 losses = []
-                for step, batch in tqdm(enumerate(eval_dataloader)):
+                for step, batch in tqdm(enumerate(test_dataloader)):
                     with torch.no_grad():
                         input_ids = batch['input_ids']
                         attention_mask = batch['attention_mask']
