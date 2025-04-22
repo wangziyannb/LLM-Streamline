@@ -5,6 +5,7 @@ from itertools import chain
 
 import torch
 import torch.nn as nn
+import wandb  # Weights & Biases for experiment tracking
 from accelerate import Accelerator
 from datasets import load_from_disk, load_dataset, concatenate_datasets, DatasetDict
 from torch.utils.data import DataLoader
@@ -17,11 +18,9 @@ from scheduler import get_cosine_schedule_with_warmup
 
 
 def process_datasets(dataset, train_num_data, tokenizer):
-    '''
-    We divided the proportions of RedPajamaCommonCrawl, RedPajamaArXiv,
-    and RedPajamaBook by a normalization value because the data length
-    in these domains is higher than in other domains.
-    '''
+    """
+    We divide the proportions of RedPajama datasets to balance domain representation.
+    """
     proportions = {
         "RedPajamaC4": 0.492,
         "RedPajamaStackExchange": 0.01,
@@ -32,205 +31,201 @@ def process_datasets(dataset, train_num_data, tokenizer):
         "RedPajamaBook": 0.091 / 200
     }
 
+    # Filter by sub-dataset
     filtered_datasets = {
         name: dataset.filter(lambda x: x['meta'] == {"redpajama_set_name": f"{name}"})
         for name in proportions.keys()
     }
 
-    test_datasets = []
-    train_datasets = []
-
-    for name, proportion in proportions.items():
-        split = filtered_datasets[name].train_test_split(test_size=(3000 * proportion) / len(filtered_datasets[name]))
+    test_datasets, train_datasets = [], []
+    for name, prop in proportions.items():
+        split = filtered_datasets[name].train_test_split(
+            test_size=(3000 * prop) / len(filtered_datasets[name])
+        )
         test_datasets.append(split['test'])
-        train_split = \
-            split['train'].train_test_split(test_size=1 - (train_num_data * proportion) / len(split['train']))['train']
+        train_split = split['train'].train_test_split(
+            test_size=1 - (train_num_data * prop) / len(split['train'])
+        )['train']
         train_datasets.append(train_split)
 
-    dataset, test_dataset = concatenate_datasets(train_datasets), concatenate_datasets(test_datasets)
+    dataset = concatenate_datasets(train_datasets)
+    test_dataset = concatenate_datasets(test_datasets)
 
     tokenizer.pad_token = tokenizer.eos_token
-
     column_names = dataset.column_names
-    text_column_name = "text" if "text" in column_names else column_names[0]
+    text_col = "text" if "text" in column_names else column_names[0]
 
-    def tokenize_function(examples):
-        return tokenizer(examples[text_column_name])
+    def tokenize_fn(examples):
+        return tokenizer(examples[text_col])
 
-    dataset = dataset.map(
-        tokenize_function,
-        batched=True,
-        remove_columns=column_names,
-        desc="Running tokenizer on dataset",
-    )
+    dataset = dataset.map(tokenize_fn, batched=True, remove_columns=column_names)
+    test_dataset = test_dataset.map(tokenize_fn, batched=True, remove_columns=column_names)
 
-    test_dataset = test_dataset.map(
-        tokenize_function,
-        batched=True,
-        remove_columns=column_names,
-        desc="Running tokenizer on dataset",
-    )
-
-    block_size = 2048
-
+    block_size = wandb.config.block_size
     def group_texts(examples):
-        concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
-        total_length = len(concatenated_examples[list(examples.keys())[0]])
-        total_length = (total_length // block_size) * block_size
+        concatenated = {k: list(chain(*examples[k])) for k in examples.keys()}
+        total_len = len(concatenated[list(examples.keys())[0]])
+        total_len = (total_len // block_size) * block_size
         result = {
-            k: [t[i: i + block_size] for i in range(0, total_length, block_size)]
-            for k, t in concatenated_examples.items()
+            k: [t[i: i + block_size] for i in range(0, total_len, block_size)]
+            for k, t in concatenated.items()
         }
         result["labels"] = result["input_ids"].copy()
         return result
 
-    dataset = dataset.map(
-        group_texts,
-        batched=True,
-        desc=f"Grouping texts in chunks of {block_size}",
-    )
-    test_dataset = test_dataset.map(
-        group_texts,
-        batched=True,
-        desc=f"Grouping texts in chunks of {block_size}",
-    )
+    dataset = dataset.map(group_texts, batched=True)
+    test_dataset = test_dataset.map(group_texts, batched=True)
     return dataset, test_dataset
 
 
 if __name__ == '__main__':
+    # Initialize Accelerator
     device = 'cuda'
     accelerator = Accelerator(mixed_precision='bf16', gradient_accumulation_steps=1)
 
-    config = AutoConfig.from_pretrained('meta-llama/Llama-2-7b-hf')
-    '''
-    Since Llama-3.1-8B has 32 layers, we will prune layers 21 to 30 while keeping layers 31 and 32. 
-    The training data should be prepared such that the input to the 20th layer serves as the input to the lightweight layer, 
-    and the output of the 30th layer serves as the output of the lightweight layer. 
-    Therefore, during the training of the lightweight layer, layers 31 and 32 are not involved.
-    '''
-    config.num_hidden_layers = 2
-    tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-2-7b-hf')
+    # Initialize Weights & Biases
+    wandb.init(
+        project="slimpajama_prune_lama2",
+        config={
+            "epochs": 20,
+            "batch_size": 32,
+            "learning_rate": 1e-3,
+            "weight_decay": 1e-4,
+            "betas": (0.9, 0.95),
+            "block_size": 2048,
+            "model_name": "meta-llama/Llama-2-7b-hf"
+        }
+    )
+    config = wandb.config
+
+    # Model and tokenizer setup
+    auto_config = AutoConfig.from_pretrained(config.model_name)
+    auto_config.num_hidden_layers = 2  # only keep layers 21-30 for replacement layer
+    tokenizer = AutoTokenizer.from_pretrained(config.model_name)
     tokenizer.pad_token = tokenizer.eos_token
 
-    model = LlamaModel(config)
-    llama_model = AutoModelForCausalLM.from_pretrained('meta-llama/Llama-2-7b-hf')
+    # Custom lightweight LlamaModel
+    model = LlamaModel(auto_config)
+    llama_model = AutoModelForCausalLM.from_pretrained(config.model_name)
 
-    model_dict = model.state_dict()
+    # Load pretrained weights into the replace_layer model
+    state_dict = model.state_dict()
     llama_dict = llama_model.state_dict()
-
-    model_dict['embed_tokens.weight'] = llama_dict['model.embed_tokens.weight']
-    for i in range(2):
-        model_dict['layers.{}.self_attn.q_proj.weight'.format(i)] = llama_dict[
-            'model.layers.{}.self_attn.q_proj.weight'.format(i)]
-        model_dict['layers.{}.self_attn.k_proj.weight'.format(i)] = llama_dict[
-            'model.layers.{}.self_attn.k_proj.weight'.format(i)]
-        model_dict['layers.{}.self_attn.v_proj.weight'.format(i)] = llama_dict[
-            'model.layers.{}.self_attn.v_proj.weight'.format(i)]
-        model_dict['layers.{}.self_attn.o_proj.weight'.format(i)] = llama_dict[
-            'model.layers.{}.self_attn.o_proj.weight'.format(i)]
-
-        model_dict['layers.{}.mlp.gate_proj.weight'.format(i)] = llama_dict[
-            'model.layers.{}.mlp.gate_proj.weight'.format(i)]
-        model_dict['layers.{}.mlp.up_proj.weight'.format(i)] = llama_dict[
-            'model.layers.{}.mlp.up_proj.weight'.format(i)]
-        model_dict['layers.{}.mlp.down_proj.weight'.format(i)] = llama_dict[
-            'model.layers.{}.mlp.down_proj.weight'.format(i)]
-
-        model_dict['layers.{}.input_layernorm.weight'.format(i)] = llama_dict[
-            'model.layers.{}.input_layernorm.weight'.format(i)]
-        model_dict['layers.{}.post_attention_layernorm.weight'.format(i)] = llama_dict[
-            'model.layers.{}.post_attention_layernorm.weight'.format(i)]
-
-    model.load_state_dict(model_dict)
+    state_dict['embed_tokens.weight'] = llama_dict['model.embed_tokens.weight']
+    for i in range(auto_config.num_hidden_layers):
+        for proj in ['q_proj','k_proj','v_proj','o_proj']:
+            state_dict[f'layers.{i}.self_attn.{proj}.weight'] = llama_dict[f'model.layers.{i}.self_attn.{proj}.weight']
+        for mlp_proj in ['gate_proj','up_proj','down_proj']:
+            state_dict[f'layers.{i}.mlp.{mlp_proj}.weight'] = llama_dict[f'model.layers.{i}.mlp.{mlp_proj}.weight']
+        for ln in ['input_layernorm','post_attention_layernorm']:
+            state_dict[f'layers.{i}.{ln}.weight'] = llama_dict[f'model.layers.{i}.{ln}.weight']
+    model.load_state_dict(state_dict)
     del llama_model
-    model = model.to(device)
-    for name, p in model.named_parameters():
-        if "replace_layer" in name:
-            continue
-        else:
-            if p.requires_grad == True:
-                p.requires_grad = False
 
+    model = model.to(device)
+    # Freeze all except replace_layer
+    for name, p in model.named_parameters():
+        if 'replace_layer' not in name:
+            p.requires_grad = False
+
+    # Dataset loading or processing
     if os.path.exists("slimpajama-Llama-2-tokenized-0.06b"):
         datasets = load_from_disk("slimpajama-Llama-2-tokenized-0.06b")
-        dataset = datasets['train']
+        train_dataset = datasets['train']
         test_dataset = datasets['validation']
     else:
-        dataset = load_dataset('DKYoon/SlimPajama-6B')['train']
-        dataset, test_dataset = process_datasets(dataset, 100000, tokenizer)
+        raw = load_dataset('DKYoon/SlimPajama-6B')['train']
+        train_dataset, test_dataset = process_datasets(raw, 100000, tokenizer)
+        ds = DatasetDict({'train': train_dataset, 'validation': test_dataset})
+        ds.save_to_disk("slimpajama-Llama-2-tokenized-0.06b")
 
-        # dataset = load_from_disk('/data/slimpajama-0.5B-Llama-3-tokenized')
-        # eval_dataset = dataset['validation']
-        datasets = DatasetDict({'validation': test_dataset, 'train': dataset})
-        datasets.save_to_disk("slimpajama-Llama-2-tokenized-0.06b")
+    # DataLoaders
+    collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    train_loader = DataLoader(train_dataset, batch_size=config.batch_size, collate_fn=collator, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=config.batch_size, collate_fn=collator, shuffle=True)
 
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
-    test_dataloader = DataLoader(test_dataset, batch_size=32, collate_fn=data_collator,
-                                 shuffle=True)
-    train_dataloader = DataLoader(dataset, batch_size=32, collate_fn=data_collator,
-                                  shuffle=True)
-
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4, betas=(0.9, 0.95))
+    # Optimizer and scheduler
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=config.learning_rate,
+        weight_decay=config.weight_decay,
+        betas=config.betas
+    )
     lr_scheduler = get_cosine_schedule_with_warmup(
         optimizer=optimizer,
-        num_warmup_steps=len(train_dataloader) * 0.03,
-        num_training_steps=len(train_dataloader),
-        max_learning_rate=1e-3,
+        num_warmup_steps=int(len(train_loader) * 0.03),
+        num_training_steps=len(train_loader) * config.epochs,
+        max_learning_rate=config.learning_rate,
         min_learning_rate=2.5e-5,
     )
 
-    train_dataloader, test_dataloader, model, optimizer = accelerator.prepare(
-        train_dataloader, test_dataloader, model, optimizer
+    # Prepare with accelerator
+    train_loader, test_loader, model, optimizer = accelerator.prepare(
+        train_loader, test_loader, model, optimizer
     )
 
-    mse_loss = nn.MSELoss()
+    # Track gradients and parameters
+    wandb.watch(model, log="all", log_freq=100)
 
-    best_loss = 10000
-    for epoch in range(20):
+    mse_loss = nn.MSELoss()
+    best_loss = float('inf')
+    global_step = 0
+
+    # Training loop
+    for epoch in range(config.epochs):
         model.train()
-        for step, batch in enumerate(
-                tqdm(train_dataloader, desc=f"Epoch {epoch}", total=len(train_dataloader))
-        ):
+        for step, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch}")):
             with accelerator.accumulate(model):
-                input_ids = batch['input_ids']
-                attention_mask = batch['attention_mask']
+                input_ids = batch['input_ids'].to(device)
+                attention_mask = batch['attention_mask'].to(device)
                 outputs = model(input_ids=input_ids, attention_mask=attention_mask)
                 output_dict = outputs.last_hidden_state[-1]
                 labels = output_dict["target_output"]
-                outputs = output_dict["replace_layer_output"]
-                loss = mse_loss(labels, outputs)
+                preds = output_dict["replace_layer_output"]
+                loss = mse_loss(labels, preds)
 
                 accelerator.backward(loss)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
 
-            if (step + 1) % 500 == 0:
+            global_step += 1
+            # Log training metrics
+            wandb.log({
+                "train/loss": loss.item(),
+                "train/epoch": epoch,
+                "train/step": global_step,
+                "lr": lr_scheduler.get_last_lr()[0]
+            }, step=global_step)
+
+            # Periodic evaluation
+            if global_step % 400 == 0:
                 model.eval()
-                losses = []
-                for step, batch in tqdm(enumerate(test_dataloader)):
+                eval_losses = []
+                for _, eval_batch in enumerate(test_loader):
                     with torch.no_grad():
-                        input_ids = batch['input_ids']
-                        attention_mask = batch['attention_mask']
-                        outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-                        output_dict = outputs.last_hidden_state[-1]
-                        labels = output_dict["target_output"]
-                        outputs = output_dict["replace_layer_output"]
+                        iid = eval_batch['input_ids'].to(device)
+                        am = eval_batch['attention_mask'].to(device)
+                        out = model(input_ids=iid, attention_mask=am)
+                        od = out.last_hidden_state[-1]
+                        lbls = od["target_output"]
+                        pr = od["replace_layer_output"]
+                        l = mse_loss(lbls, pr)
+                        eval_losses.append(l)
+                eval_loss = torch.stack(eval_losses).mean().item()
+                wandb.log({"eval/loss": eval_loss, "eval/global_step": global_step}, step=global_step)
 
-                    loss = mse_loss(labels, outputs)
-                    losses.append(accelerator.gather_for_metrics(loss.repeat(64)))
-
-                losses = torch.cat(losses)
-                eval_loss = torch.mean(losses)
-                print(eval_loss)
                 if eval_loss < best_loss:
                     best_loss = eval_loss
-                    # model.save_pretrained('')
+                    # Save best replace_layer weights
+                    torch.save({
+                        'config': copy.deepcopy(model.replace_layer.config),
+                        'u_pruned': copy.deepcopy(model.replace_layer.up_proj),
+                        'g_pruned': copy.deepcopy(model.replace_layer.gate_proj),
+                        'd_pruned': copy.deepcopy(model.replace_layer.down_proj)
+                    }, 'sub_mlp.pth')
+                    # wandb.save('sub_mlp.pth')
                 model.train()
-    # torch.save(model, 'model.bin')
-    torch.save(
-        {'config': copy.deepcopy(model.replace_layer.config), 'u_pruned': copy.deepcopy(model.replace_layer.up_proj),
-         'g_pruned': copy.deepcopy(model.replace_layer.gate_proj),
-         'd_pruned': copy.deepcopy(model.replace_layer.down_proj)}, 'sub_mlp.pth')
 
-    # model.save_pretrained('')
+    # Finish run
+    wandb.finish()
