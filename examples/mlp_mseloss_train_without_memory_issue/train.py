@@ -185,9 +185,11 @@ if __name__ == '__main__':
     mse_loss = nn.MSELoss()
 
     best_loss = 10000
-    for epoch in range(1):
+    for epoch in range(20):
         model.train()
-        for step, batch in tqdm(enumerate(train_dataloader)):
+        for step, batch in enumerate(
+        tqdm(train_dataloader, desc=f"Epoch {epoch}", total=len(train_dataloader))
+    ):
             with accelerator.accumulate(model):
                 input_ids = batch['input_ids']
                 attention_mask = batch['attention_mask']
