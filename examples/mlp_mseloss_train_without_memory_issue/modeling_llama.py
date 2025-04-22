@@ -721,9 +721,9 @@ class LlamaDecoderLayer(nn.Module):
                 into the model
         """
         residual = hidden_states
-
+        self_attn_block_input = hidden_states.clone()
         hidden_states = self.input_layernorm(hidden_states)
-
+        self_attn_input = hidden_states.clone()
         # Self Attention
         hidden_states, self_attn_weights, present_key_value = self.self_attn(
             hidden_states=hidden_states,
@@ -736,8 +736,11 @@ class LlamaDecoderLayer(nn.Module):
             position_embeddings=position_embeddings,
             **kwargs,
         )
+        self_attn_output = hidden_states.clone()
         hidden_states = residual + hidden_states
+        self_attn_block_output = hidden_states.clone()
 
+        mlp_block_input = hidden_states.clone()
         # Fully Connected
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
@@ -745,7 +748,7 @@ class LlamaDecoderLayer(nn.Module):
         hidden_states = self.mlp(hidden_states)
         mlp_output = hidden_states.clone()
         hidden_states = residual + hidden_states
-
+        mlp_block_output = hidden_states.clone()
         outputs = (hidden_states,)
 
         if output_attentions:
@@ -753,8 +756,12 @@ class LlamaDecoderLayer(nn.Module):
 
         if use_cache:
             outputs += (present_key_value,)
-        outputs += (mlp_input,)
-        outputs += (mlp_output,)
+
+        outputs += ({'mlp_input': mlp_input, 'mlp_output': mlp_output, 'mlp_block_input': mlp_block_input,
+                     'mlp_block_output': mlp_block_output, 'self_attn_input': self_attn_input,
+                     'self_attn_output': self_attn_output,
+                     'self_attn_block_input': self_attn_block_input,
+                     'self_attn_block_output': self_attn_block_output, },)
         return outputs
 
 
@@ -986,7 +993,7 @@ class LlamaModel(LlamaPreTrainedModel):
         next_decoder_cache = None
 
         idx = 0
-
+        target_output = None
         for decoder_layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -1016,8 +1023,7 @@ class LlamaModel(LlamaPreTrainedModel):
                 )
 
             hidden_states = layer_outputs[0]
-            mlp_hidden_states_input = layer_outputs[-2]
-            mlp_hidden_states_output = layer_outputs[-1]
+            hidden_states_dict = layer_outputs[-1]
             if use_cache:
                 next_decoder_cache = layer_outputs[2 if output_attentions else 1]
 
@@ -1025,7 +1031,13 @@ class LlamaModel(LlamaPreTrainedModel):
                 all_self_attns += (layer_outputs[1],)
 
             if idx == 1:  # The hidden states after the 19th layer are fed into the lightweight layer.
-                replace_hidden_states = self.replace_layer(mlp_hidden_states_input)
+                # outputs += ({'mlp_input': mlp_input, 'mlp_output': mlp_output, 'mlp_block_input': mlp_block_input,
+                #              'mlp_block_output': mlp_block_output, 'self_attn_input': self_attn_input,
+                #              'self_attn_output': self_attn_output,
+                #              'self_attn_block_input': self_attn_block_input,
+                #              'self_attn_block_output': self_attn_block_output, },)
+                replace_hidden_states = self.replace_layer(hidden_states_dict['self_attn_block_input'])
+                target_output = hidden_states_dict['mlp_block_output']
             idx += 1
 
         # hidden_states = self.norm(hidden_states)
@@ -1041,7 +1053,8 @@ class LlamaModel(LlamaPreTrainedModel):
         if not return_dict:
             return tuple(v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns] if v is not None)
         return BaseModelOutputWithPast(
-            last_hidden_state=[hidden_states, replace_hidden_states, mlp_hidden_states_output],
+            last_hidden_state=[hidden_states, {'replace_layer_output': replace_hidden_states,
+                                               'target_output': target_output}],
             past_key_values=next_cache,
             hidden_states=all_hidden_states,
             attentions=all_self_attns,

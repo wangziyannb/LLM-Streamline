@@ -1,3 +1,4 @@
+import copy
 import os
 import pickle
 from itertools import chain
@@ -188,14 +189,15 @@ if __name__ == '__main__':
     for epoch in range(20):
         model.train()
         for step, batch in enumerate(
-        tqdm(train_dataloader, desc=f"Epoch {epoch}", total=len(train_dataloader))
-    ):
+                tqdm(train_dataloader, desc=f"Epoch {epoch}", total=len(train_dataloader))
+        ):
             with accelerator.accumulate(model):
                 input_ids = batch['input_ids']
                 attention_mask = batch['attention_mask']
                 outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-                labels = outputs.last_hidden_state[-1]
-                outputs = outputs.last_hidden_state[-2]
+                output_dict = outputs.last_hidden_state[-1]
+                labels = output_dict["target_output"]
+                outputs = output_dict["replace_layer_output"]
                 loss = mse_loss(labels, outputs)
 
                 accelerator.backward(loss)
@@ -211,8 +213,9 @@ if __name__ == '__main__':
                         input_ids = batch['input_ids']
                         attention_mask = batch['attention_mask']
                         outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-                        labels = outputs.last_hidden_state[-1]
-                        outputs = outputs.last_hidden_state[-2]
+                        output_dict = outputs.last_hidden_state[-1]
+                        labels = output_dict["target_output"]
+                        outputs = output_dict["replace_layer_output"]
 
                     loss = mse_loss(labels, outputs)
                     losses.append(accelerator.gather_for_metrics(loss.repeat(64)))
@@ -224,5 +227,10 @@ if __name__ == '__main__':
                     best_loss = eval_loss
                     # model.save_pretrained('')
                 model.train()
-    torch.save(model, 'model.bin')
+    # torch.save(model, 'model.bin')
+    torch.save(
+        {'config': copy.deepcopy(model.replace_layer.config), 'u_pruned': copy.deepcopy(model.replace_layer.up_proj),
+         'g_pruned': copy.deepcopy(model.replace_layer.gate_proj),
+         'd_pruned': copy.deepcopy(model.replace_layer.down_proj)}, 'sub_mlp.pth')
+
     # model.save_pretrained('')
