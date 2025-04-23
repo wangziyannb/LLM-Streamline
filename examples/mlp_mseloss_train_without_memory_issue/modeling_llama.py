@@ -757,11 +757,17 @@ class LlamaDecoderLayer(nn.Module):
         if use_cache:
             outputs += (present_key_value,)
 
-        outputs += ({'mlp_input': mlp_input, 'mlp_output': mlp_output, 'mlp_block_input': mlp_block_input,
-                     'mlp_block_output': mlp_block_output, 'self_attn_input': self_attn_input,
-                     'self_attn_output': self_attn_output,
-                     'self_attn_block_input': self_attn_block_input,
-                     'self_attn_block_output': self_attn_block_output, },)
+        outputs += ({
+                        # 'mlp_input': mlp_input,
+                        # 'mlp_output': mlp_output,
+                        # 'mlp_block_input': mlp_block_input,
+                        'mlp_block_output': mlp_block_output,
+                        # 'self_attn_input': self_attn_input,
+                        # 'self_attn_output': self_attn_output,
+                        'self_attn_block_input': self_attn_block_input,
+                        # 'self_attn_block_output': self_attn_block_output,
+                    },
+        )
         return outputs
 
 
@@ -1037,6 +1043,8 @@ class LlamaModel(LlamaPreTrainedModel):
                 #              'self_attn_block_input': self_attn_block_input,
                 #              'self_attn_block_output': self_attn_block_output, },)
                 replace_hidden_states = self.replace_layer(hidden_states_dict['self_attn_block_input'])
+                # target_output = hidden_states_dict['mlp_block_output']
+            if idx == 3:
                 target_output = hidden_states_dict['mlp_block_output']
             idx += 1
 

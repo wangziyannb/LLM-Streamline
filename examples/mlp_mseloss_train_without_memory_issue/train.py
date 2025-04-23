@@ -100,7 +100,7 @@ if __name__ == '__main__':
 
     # Model and tokenizer setup
     auto_config = AutoConfig.from_pretrained(config.model_name)
-    auto_config.num_hidden_layers = 2  # only keep layers 21-30 for replacement layer
+    auto_config.num_hidden_layers = 4  # only keep layers 21-30 for replacement layer
     tokenizer = AutoTokenizer.from_pretrained(config.model_name)
     tokenizer.pad_token = tokenizer.eos_token
 
@@ -165,7 +165,7 @@ if __name__ == '__main__':
     )
 
     # Track gradients and parameters
-    wandb.watch(model, log="all", log_freq=100)
+    wandb.watch(model, log=None, log_freq=10)
 
     mse_loss = nn.MSELoss()
     best_loss = float('inf')
@@ -176,8 +176,8 @@ if __name__ == '__main__':
         model.train()
         for step, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch}")):
             with accelerator.accumulate(model):
-                input_ids = batch['input_ids'].to(device)
-                attention_mask = batch['attention_mask'].to(device)
+                input_ids = batch['input_ids']
+                attention_mask = batch['attention_mask']
                 outputs = model(input_ids=input_ids, attention_mask=attention_mask)
                 output_dict = outputs.last_hidden_state[-1]
                 labels = output_dict["target_output"]
@@ -204,15 +204,16 @@ if __name__ == '__main__':
                 eval_losses = []
                 for _, eval_batch in enumerate(test_loader):
                     with torch.no_grad():
-                        iid = eval_batch['input_ids'].to(device)
-                        am = eval_batch['attention_mask'].to(device)
-                        out = model(input_ids=iid, attention_mask=am)
+                        input_ids = batch['input_ids']
+                        attention_mask = batch['attention_mask']
+                        out = model(input_ids=input_ids, attention_mask=attention_mask)
                         od = out.last_hidden_state[-1]
                         lbls = od["target_output"]
                         pr = od["replace_layer_output"]
-                        l = mse_loss(lbls, pr)
-                        eval_losses.append(l)
-                eval_loss = torch.stack(eval_losses).mean().item()
+                    l = mse_loss(lbls, pr)
+                    eval_losses.append(accelerator.gather_for_metrics(loss.repeat(32)))
+                losses = torch.cat(eval_losses)
+                eval_loss = torch.mean(losses)
                 wandb.log({"eval/loss": eval_loss, "eval/global_step": global_step}, step=global_step)
 
                 if eval_loss < best_loss:
