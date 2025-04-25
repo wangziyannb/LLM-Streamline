@@ -62,6 +62,7 @@ def process_datasets(dataset, train_num_data, tokenizer):
     test_dataset = test_dataset.map(tokenize_fn, batched=True, remove_columns=column_names)
 
     block_size = wandb.config.block_size
+
     def group_texts(examples):
         concatenated = {k: list(chain(*examples[k])) for k in examples.keys()}
         total_len = len(concatenated[list(examples.keys())[0]])
@@ -88,8 +89,8 @@ if __name__ == '__main__':
         project="slimpajama_prune_lama2",
         config={
             "epochs": 20,
-            "batch_size": 32,
-            "learning_rate": 1e-3,
+            "batch_size": 16,
+            "learning_rate": 0.5e-3,
             "weight_decay": 1e-4,
             "betas": (0.9, 0.95),
             "block_size": 2048,
@@ -100,7 +101,7 @@ if __name__ == '__main__':
 
     # Model and tokenizer setup
     auto_config = AutoConfig.from_pretrained(config.model_name)
-    auto_config.num_hidden_layers = 4  # only keep layers 21-30 for replacement layer
+    auto_config.num_hidden_layers = 3  # only keep layers 21-30 for replacement layer
     tokenizer = AutoTokenizer.from_pretrained(config.model_name)
     tokenizer.pad_token = tokenizer.eos_token
 
@@ -113,11 +114,11 @@ if __name__ == '__main__':
     llama_dict = llama_model.state_dict()
     state_dict['embed_tokens.weight'] = llama_dict['model.embed_tokens.weight']
     for i in range(auto_config.num_hidden_layers):
-        for proj in ['q_proj','k_proj','v_proj','o_proj']:
+        for proj in ['q_proj', 'k_proj', 'v_proj', 'o_proj']:
             state_dict[f'layers.{i}.self_attn.{proj}.weight'] = llama_dict[f'model.layers.{i}.self_attn.{proj}.weight']
-        for mlp_proj in ['gate_proj','up_proj','down_proj']:
+        for mlp_proj in ['gate_proj', 'up_proj', 'down_proj']:
             state_dict[f'layers.{i}.mlp.{mlp_proj}.weight'] = llama_dict[f'model.layers.{i}.mlp.{mlp_proj}.weight']
-        for ln in ['input_layernorm','post_attention_layernorm']:
+        for ln in ['input_layernorm', 'post_attention_layernorm']:
             state_dict[f'layers.{i}.{ln}.weight'] = llama_dict[f'model.layers.{i}.{ln}.weight']
     model.load_state_dict(state_dict)
     del llama_model
@@ -156,7 +157,7 @@ if __name__ == '__main__':
         num_warmup_steps=int(len(train_loader) * 0.03),
         num_training_steps=len(train_loader) * config.epochs,
         max_learning_rate=config.learning_rate,
-        min_learning_rate=2.5e-5,
+        min_learning_rate=1.25e-5,
     )
 
     # Prepare with accelerator
@@ -199,7 +200,7 @@ if __name__ == '__main__':
             }, step=global_step)
 
             # Periodic evaluation
-            if global_step % 400 == 0:
+            if global_step % 300 == 0:
                 model.eval()
                 eval_losses = []
                 for _, eval_batch in enumerate(test_loader):
@@ -219,12 +220,19 @@ if __name__ == '__main__':
                 if eval_loss < best_loss:
                     best_loss = eval_loss
                     # Save best replace_layer weights
+                    # torch.save({
+                    #     'config': copy.deepcopy(model.replace_layer.config),
+                    #     'u_pruned': copy.deepcopy(model.replace_layer.up_proj),
+                    #     'g_pruned': copy.deepcopy(model.replace_layer.gate_proj),
+                    #     'd_pruned': copy.deepcopy(model.replace_layer.down_proj)
+                    # }, 'sub_mlp.pth')
                     torch.save({
-                        'config': copy.deepcopy(model.replace_layer.config),
-                        'u_pruned': copy.deepcopy(model.replace_layer.up_proj),
-                        'g_pruned': copy.deepcopy(model.replace_layer.gate_proj),
-                        'd_pruned': copy.deepcopy(model.replace_layer.down_proj)
-                    }, 'sub_mlp.pth')
+                        'config': copy.deepcopy(model.config),
+                        'state_dict': model.replace_layer.state_dict(),
+                        # 'u_pruned': copy.deepcopy(model.replace_layer.up_proj),
+                        # 'g_pruned': copy.deepcopy(model.replace_layer.gate_proj),
+                        # 'd_pruned': copy.deepcopy(model.replace_layer.down_proj)
+                    }, 'sub_decoder_layer_2.pth')
                     # wandb.save('sub_mlp.pth')
                 model.train()
 

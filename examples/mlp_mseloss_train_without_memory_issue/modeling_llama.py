@@ -721,9 +721,9 @@ class LlamaDecoderLayer(nn.Module):
                 into the model
         """
         residual = hidden_states
-        self_attn_block_input = hidden_states.clone()
+        # self_attn_block_input = hidden_states.clone()
         hidden_states = self.input_layernorm(hidden_states)
-        self_attn_input = hidden_states.clone()
+        # self_attn_input = hidden_states.clone()
         # Self Attention
         hidden_states, self_attn_weights, present_key_value = self.self_attn(
             hidden_states=hidden_states,
@@ -736,17 +736,17 @@ class LlamaDecoderLayer(nn.Module):
             position_embeddings=position_embeddings,
             **kwargs,
         )
-        self_attn_output = hidden_states.clone()
+        # self_attn_output = hidden_states.clone()
         hidden_states = residual + hidden_states
-        self_attn_block_output = hidden_states.clone()
+        # self_attn_block_output = hidden_states.clone()
 
-        mlp_block_input = hidden_states.clone()
+        # mlp_block_input = hidden_states.clone()
         # Fully Connected
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
-        mlp_input = hidden_states.clone()
+        # mlp_input = hidden_states.clone()
         hidden_states = self.mlp(hidden_states)
-        mlp_output = hidden_states.clone()
+        # mlp_output = hidden_states.clone()
         hidden_states = residual + hidden_states
         mlp_block_output = hidden_states.clone()
         outputs = (hidden_states,)
@@ -764,7 +764,7 @@ class LlamaDecoderLayer(nn.Module):
                         'mlp_block_output': mlp_block_output,
                         # 'self_attn_input': self_attn_input,
                         # 'self_attn_output': self_attn_output,
-                        'self_attn_block_input': self_attn_block_input,
+                        # 'self_attn_block_input': self_attn_block_input,
                         # 'self_attn_block_output': self_attn_block_output,
                     },
         )
@@ -913,7 +913,10 @@ class LlamaModel(LlamaPreTrainedModel):
             [LlamaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
 
-        self.replace_layer = LlamaMLP(config)  # The Lightweight Layer
+        self.replace_layer = nn.ModuleList(
+            [LlamaDecoderLayer(config, 99), LlamaDecoderLayer(config, 100)]
+        )
+        # self.replace_layer = LlamaMLP(config)  # The Lightweight Layer
 
         # self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = LlamaRotaryEmbedding(config=config)
@@ -1028,6 +1031,20 @@ class LlamaModel(LlamaPreTrainedModel):
                     position_embeddings=position_embeddings,
                 )
 
+            if idx == 1:
+                replace_output = hidden_states.clone()
+                for replace_decoder_layer in self.replace_layer:
+                    replace_output = replace_decoder_layer(replace_output,
+                                                           attention_mask=causal_mask,
+                                                           position_ids=position_ids,
+                                                           past_key_value=past_key_values,
+                                                           output_attentions=output_attentions,
+                                                           use_cache=use_cache,
+                                                           cache_position=cache_position,
+                                                           position_embeddings=position_embeddings, )
+                    replace_output = replace_output[0]
+                replace_hidden_states = replace_output
+
             hidden_states = layer_outputs[0]
             hidden_states_dict = layer_outputs[-1]
             if use_cache:
@@ -1036,15 +1053,15 @@ class LlamaModel(LlamaPreTrainedModel):
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
 
-            if idx == 1:  # The hidden states after the 19th layer are fed into the lightweight layer.
-                # outputs += ({'mlp_input': mlp_input, 'mlp_output': mlp_output, 'mlp_block_input': mlp_block_input,
-                #              'mlp_block_output': mlp_block_output, 'self_attn_input': self_attn_input,
-                #              'self_attn_output': self_attn_output,
-                #              'self_attn_block_input': self_attn_block_input,
-                #              'self_attn_block_output': self_attn_block_output, },)
-                replace_hidden_states = self.replace_layer(hidden_states_dict['self_attn_block_input'])
-                # target_output = hidden_states_dict['mlp_block_output']
-            if idx == 3:
+            # if idx == 1:  # The hidden states after the 19th layer are fed into the lightweight layer.
+            #     # outputs += ({'mlp_input': mlp_input, 'mlp_output': mlp_output, 'mlp_block_input': mlp_block_input,
+            #     #              'mlp_block_output': mlp_block_output, 'self_attn_input': self_attn_input,
+            #     #              'self_attn_output': self_attn_output,
+            #     #              'self_attn_block_input': self_attn_block_input,
+            #     #              'self_attn_block_output': self_attn_block_output, },)
+            #     replace_hidden_states = self.replace_layer(hidden_states_dict['self_attn_block_input'])
+            #     # target_output = hidden_states_dict['mlp_block_output']
+            if idx == 2:
                 target_output = hidden_states_dict['mlp_block_output']
             idx += 1
 
