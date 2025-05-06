@@ -89,8 +89,8 @@ if __name__ == '__main__':
         project="slimpajama_prune_lama2",
         config={
             "epochs": 20,
-            "batch_size": 16,
-            "learning_rate": 0.5e-3,
+            "batch_size": 32,
+            "learning_rate": 1e-3,
             "weight_decay": 1e-4,
             "betas": (0.9, 0.95),
             "block_size": 2048,
@@ -101,7 +101,7 @@ if __name__ == '__main__':
 
     # Model and tokenizer setup
     auto_config = AutoConfig.from_pretrained(config.model_name)
-    auto_config.num_hidden_layers = 3  # only keep layers 21-30 for replacement layer
+    auto_config.num_hidden_layers = 2  # only keep layers 21-30 for replacement layer
     tokenizer = AutoTokenizer.from_pretrained(config.model_name)
     tokenizer.pad_token = tokenizer.eos_token
 
@@ -157,7 +157,7 @@ if __name__ == '__main__':
         num_warmup_steps=int(len(train_loader) * 0.03),
         num_training_steps=len(train_loader) * config.epochs,
         max_learning_rate=config.learning_rate,
-        min_learning_rate=1.25e-5,
+        min_learning_rate=2.5e-5,
     )
 
     # Prepare with accelerator
@@ -220,19 +220,19 @@ if __name__ == '__main__':
                 if eval_loss < best_loss:
                     best_loss = eval_loss
                     # Save best replace_layer weights
-                    # torch.save({
-                    #     'config': copy.deepcopy(model.replace_layer.config),
-                    #     'u_pruned': copy.deepcopy(model.replace_layer.up_proj),
-                    #     'g_pruned': copy.deepcopy(model.replace_layer.gate_proj),
-                    #     'd_pruned': copy.deepcopy(model.replace_layer.down_proj)
-                    # }, 'sub_mlp.pth')
                     torch.save({
-                        'config': copy.deepcopy(model.config),
-                        'state_dict': model.replace_layer.state_dict(),
+                        'config': copy.deepcopy(model.replace_layer.config),
+                        'u_pruned': copy.deepcopy(model.replace_layer.up_proj),
+                        'g_pruned': copy.deepcopy(model.replace_layer.gate_proj),
+                        'd_pruned': copy.deepcopy(model.replace_layer.down_proj)
+                    }, 'sub_mlp.pth')
+                    # torch.save({
+                        # 'config': copy.deepcopy(model.config),
+                        # 'state_dict': model.replace_layer.state_dict(),
                         # 'u_pruned': copy.deepcopy(model.replace_layer.up_proj),
                         # 'g_pruned': copy.deepcopy(model.replace_layer.gate_proj),
                         # 'd_pruned': copy.deepcopy(model.replace_layer.down_proj)
-                    }, 'sub_decoder_layer_2.pth')
+                    # }, 'sub_decoder_layer_2.pth')
                     # wandb.save('sub_mlp.pth')
                 model.train()
 

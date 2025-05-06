@@ -1031,19 +1031,19 @@ class LlamaModel(LlamaPreTrainedModel):
                     position_embeddings=position_embeddings,
                 )
 
-            if idx == 1:
-                replace_output = hidden_states.clone()
-                for replace_decoder_layer in self.replace_layer:
-                    replace_output = replace_decoder_layer(replace_output,
-                                                           attention_mask=causal_mask,
-                                                           position_ids=position_ids,
-                                                           past_key_value=past_key_values,
-                                                           output_attentions=output_attentions,
-                                                           use_cache=use_cache,
-                                                           cache_position=cache_position,
-                                                           position_embeddings=position_embeddings, )
-                    replace_output = replace_output[0]
-                replace_hidden_states = replace_output
+            # if idx == 0:
+                # replace_output = hidden_states.clone()
+                # for replace_decoder_layer in self.replace_layer:
+                #     replace_output = replace_decoder_layer(replace_output,
+                #                                            attention_mask=causal_mask,
+                #                                            position_ids=position_ids,
+                #                                            past_key_value=past_key_values,
+                #                                            output_attentions=output_attentions,
+                #                                            use_cache=use_cache,
+                #                                            cache_position=cache_position,
+                #                                            position_embeddings=position_embeddings, )
+                #     replace_output = replace_output[0]
+                # replace_hidden_states = replace_output
 
             hidden_states = layer_outputs[0]
             hidden_states_dict = layer_outputs[-1]
@@ -1053,14 +1053,14 @@ class LlamaModel(LlamaPreTrainedModel):
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
 
-            # if idx == 1:  # The hidden states after the 19th layer are fed into the lightweight layer.
-            #     # outputs += ({'mlp_input': mlp_input, 'mlp_output': mlp_output, 'mlp_block_input': mlp_block_input,
-            #     #              'mlp_block_output': mlp_block_output, 'self_attn_input': self_attn_input,
-            #     #              'self_attn_output': self_attn_output,
-            #     #              'self_attn_block_input': self_attn_block_input,
-            #     #              'self_attn_block_output': self_attn_block_output, },)
-            #     replace_hidden_states = self.replace_layer(hidden_states_dict['self_attn_block_input'])
-            #     # target_output = hidden_states_dict['mlp_block_output']
+            if idx == 0:  # The hidden states after the 19th layer are fed into the lightweight layer.
+                # outputs += ({'mlp_input': mlp_input, 'mlp_output': mlp_output, 'mlp_block_input': mlp_block_input,
+                #              'mlp_block_output': mlp_block_output, 'self_attn_input': self_attn_input,
+                #              'self_attn_output': self_attn_output,
+                #              'self_attn_block_input': self_attn_block_input,
+                #              'self_attn_block_output': self_attn_block_output, },)
+                replace_hidden_states = self.replace_layer(hidden_states_dict['self_attn_block_input'])
+                # target_output = hidden_states_dict['mlp_block_output']
             if idx == 2:
                 target_output = hidden_states_dict['mlp_block_output']
             idx += 1
