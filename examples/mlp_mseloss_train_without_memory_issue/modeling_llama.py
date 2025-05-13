@@ -721,7 +721,7 @@ class LlamaDecoderLayer(nn.Module):
                 into the model
         """
         residual = hidden_states
-        # self_attn_block_input = hidden_states.clone()
+        self_attn_block_input = hidden_states.clone()
         hidden_states = self.input_layernorm(hidden_states)
         # self_attn_input = hidden_states.clone()
         # Self Attention
@@ -764,7 +764,7 @@ class LlamaDecoderLayer(nn.Module):
                         'mlp_block_output': mlp_block_output,
                         # 'self_attn_input': self_attn_input,
                         # 'self_attn_output': self_attn_output,
-                        # 'self_attn_block_input': self_attn_block_input,
+                        'self_attn_block_input': self_attn_block_input,
                         # 'self_attn_block_output': self_attn_block_output,
                     },
         )
@@ -1053,7 +1053,7 @@ class LlamaModel(LlamaPreTrainedModel):
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
 
-            if idx == 0:  # The hidden states after the 19th layer are fed into the lightweight layer.
+            if idx == 1:  # The hidden states after the 19th layer are fed into the lightweight layer.
                 # outputs += ({'mlp_input': mlp_input, 'mlp_output': mlp_output, 'mlp_block_input': mlp_block_input,
                 #              'mlp_block_output': mlp_block_output, 'self_attn_input': self_attn_input,
                 #              'self_attn_output': self_attn_output,
