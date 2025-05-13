@@ -100,7 +100,7 @@ if __name__ == '__main__':
 
     # Model and tokenizer setup
     auto_config = AutoConfig.from_pretrained(config.model_name)
-    auto_config.num_hidden_layers = 2  # only keep layers 21-30 for replacement layer
+    auto_config.num_hidden_layers = 3  # only keep layers 21-30 for replacement layer
     tokenizer = AutoTokenizer.from_pretrained(config.model_name)
     tokenizer.pad_token = tokenizer.eos_token
 
@@ -224,7 +224,7 @@ if __name__ == '__main__':
                         'u_pruned': copy.deepcopy(model.replace_layer.up_proj),
                         'g_pruned': copy.deepcopy(model.replace_layer.gate_proj),
                         'd_pruned': copy.deepcopy(model.replace_layer.down_proj)
-                    }, 'sub_mlp.pth')
+                    }, 'sub_mlp_mistral0.3-7B-1-2.pth')
                     # torch.save({
                         # 'config': copy.deepcopy(model.config),
                         # 'state_dict': model.replace_layer.state_dict(),
