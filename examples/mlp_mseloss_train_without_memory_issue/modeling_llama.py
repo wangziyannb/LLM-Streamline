@@ -1061,7 +1061,7 @@ class LlamaModel(LlamaPreTrainedModel):
                 #              'self_attn_block_output': self_attn_block_output, },)
                 replace_hidden_states = self.replace_layer(hidden_states_dict['self_attn_block_input'])
                 # target_output = hidden_states_dict['mlp_block_output']
-            if idx == 4:
+            if idx == 6:
                 target_output = hidden_states_dict['mlp_block_output']
             idx += 1
 
