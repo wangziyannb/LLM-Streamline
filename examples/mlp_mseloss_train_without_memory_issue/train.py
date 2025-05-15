@@ -101,7 +101,7 @@ if __name__ == '__main__':
 
     # Model and tokenizer setup
     auto_config = AutoConfig.from_pretrained(config.model_name)
-    auto_config.num_hidden_layers = 5  # only keep layers 21-30 for replacement layer
+    auto_config.num_hidden_layers = 4  # only keep layers 21-30 for replacement layer
     tokenizer = AutoTokenizer.from_pretrained(config.model_name)
     tokenizer.pad_token = tokenizer.eos_token
 
@@ -143,7 +143,7 @@ if __name__ == '__main__':
     # DataLoaders
     collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
     train_loader = DataLoader(train_dataset, batch_size=config.batch_size, collate_fn=collator, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=4, collate_fn=collator, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=config.batch_size, collate_fn=collator, shuffle=True)
 
     # Optimizer and scheduler
     optimizer = torch.optim.AdamW(
@@ -212,7 +212,7 @@ if __name__ == '__main__':
                         lbls = od["target_output"]
                         pr = od["replace_layer_output"]
                     l = mse_loss(lbls, pr)
-                    eval_losses.append(accelerator.gather_for_metrics(loss.repeat(16)))
+                    eval_losses.append(accelerator.gather_for_metrics(loss.repeat(config.batch_size)))
                 losses = torch.cat(eval_losses)
                 eval_loss = torch.mean(losses)
                 wandb.log({"eval/loss": eval_loss, "eval/global_step": global_step}, step=global_step)
@@ -225,7 +225,7 @@ if __name__ == '__main__':
                         'u_pruned': copy.deepcopy(model.replace_layer.up_proj),
                         'g_pruned': copy.deepcopy(model.replace_layer.gate_proj),
                         'd_pruned': copy.deepcopy(model.replace_layer.down_proj)
-                    }, 'sub_mlp_llama2-13B-3-4.pth')
+                    }, 'sub_mlp_llama2-13B-0-1-2-3.pth')
                     # torch.save({
                         # 'config': copy.deepcopy(model.config),
                         # 'state_dict': model.replace_layer.state_dict(),
